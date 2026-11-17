@@ -1,5 +1,20 @@
 import { expect, test } from "claude-code/testing";
 
+// The shape of prompt.json (a hooks module can't import JSON; the Python tests load the real file).
+const PROMPT = {
+  system: "You rewrite a developer's rough prompt.",
+  modeRules: { auto: "", egm: "Mode egm.", code: "Mode code.", agent: "Mode agent." },
+  egmCommands: {
+    brainstorm: "/egm:egm-brainstorm",
+    draft: "/egm:egm-draft",
+    review: "/egm:egm-review",
+  },
+  subagentMarker: "run_subagent.py",
+  subagentReminder: { en: "Run run_subagent.py.", he: "להריץ run_subagent.py." },
+  brainstormWords: ["brainstorm"],
+  reviewWords: ["review"],
+};
+
 const BAND = {
   plugin: "prompt-optimizer",
   component: "AbovePrompt",
@@ -15,29 +30,39 @@ const BAND = {
 } as const;
 
 const TYPED = { wait: false, origin: { kind: "composer" } } as const;
+const USAGE = {
+  input_tokens: 1,
+  output_tokens: 1,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+};
 
-test("a prompt ending in --opt enters rewritten", async ($, on) => {
-  on("ui.status", () => ({ value: undefined }));
-  on("ui.toast", () => ({ value: undefined }));
-  const runs: { argv: readonly string[]; stdin?: string }[] = [];
-  on("process.run", (_, e) => {
-    runs.push({ argv: e.argv, stdin: e.init?.stdin });
+type On = Parameters<Parameters<typeof test>[1]>[1];
+
+// The model answers `optimized: <prompt>`; every call is recorded.
+function fakeModel(on: On) {
+  const calls: { model: string; prompt: string; system: string }[] = [];
+  on("fs.read", (_, e) =>
+    /[\\/]prompt\.json$/.test(e.path)
+      ? { value: JSON.stringify(PROMPT) }
+      : { deny: `unexpected read of ${e.path}` },
+  );
+  on("model.complete", (_, e) => {
+    calls.push({ model: e.model, prompt: e.prompt, system: String(e.system ?? "") });
 
     return {
-      value: {
-        exitCode: 0,
-        stdout: JSON.stringify({
-          triggered: true,
-          optimized: true,
-          text: "**Goal**\nFix the login bug.",
-          error: null,
-        }),
-        stderr: "",
-        isStdoutTruncated: false,
-        isStderrTruncated: false,
-      },
+      value: { isAnswered: true, text: `optimized: ${e.prompt}`, usage: USAGE },
     };
   });
+  on("ui.status", () => ({ value: undefined }));
+  on("ui.toast", () => ({ value: undefined }));
+
+  return calls;
+}
+
+test("a prompt ending in --opt enters rewritten, with no Python", async ($, on) => {
+  const calls = fakeModel(on);
+  on("process.run", () => ({ deny: "no process may run" }));
   on("prompt.submit", (_, e) => ({ text: e.text }));
 
   // The desktop app and VS Code arrive as `sdk`, the terminal as `composer`.
@@ -48,58 +73,81 @@ test("a prompt ending in --opt enters rewritten", async ($, on) => {
   });
   const entered = await $.prompt.submit({
     ...TYPED,
-    text: "fix the login bug --opt",
+    text: "~opt fix the login bug",
   });
 
-  expect(fromApp.text).toBe(entered.text);
-  expect(entered.text).toBe("**Goal**\nFix the login bug.");
-  expect(runs[0]?.argv.slice(1)).toEqual(["hooks/hook_runner.py", "--json"]);
-  expect(runs[0]?.stdin).toBe("fix the login bug --opt");
+  expect(fromApp.text).toBe("optimized: fix the login bug");
+  expect(entered.text).toBe("optimized: fix the login bug");
+  expect(calls[0]?.model).toBe("haiku");
+  expect(calls[0]?.system).toContain("You rewrite a developer's rough prompt");
 });
 
-test("a prompt with no trigger runs nothing and enters as typed", async ($, on) => {
-  on("ui.status", () => ({ value: undefined }));
-  on("ui.toast", () => ({ value: undefined }));
-  let ran = 0;
-  on("process.run", () => {
-    ran += 1;
+test("--opt=egm puts an EGM command first even when the model gives none", async ($, on) => {
+  fakeModel(on);
+  on("prompt.submit", (_, e) => ({ text: e.text }));
 
-    return { deny: "not expected" };
+  const entered = await $.prompt.submit({
+    ...TYPED,
+    text: "review the payment code --opt=egm",
   });
+
+  expect(entered.text).toBe(
+    "/egm:egm-review\n\noptimized: review the payment code",
+  );
+});
+
+test("a prompt with no trigger calls no model and enters as typed", async ($, on) => {
+  const calls = fakeModel(on);
   on("prompt.submit", (_, e) => ({ text: e.text }));
 
   for (const text of ["fix the login bug", "run with --optimize", "!opt x"]) {
     expect((await $.prompt.submit({ ...TYPED, text })).text).toBe(text);
   }
 
-  expect(ran).toBe(0);
+  expect(calls.length).toBe(0);
 });
 
-test("a failing optimizer lets the prompt through as typed", async ($, on) => {
+test("a failing model lets the prompt through without the trigger", async ($, on) => {
   on("ui.status", () => ({ value: undefined }));
   on("ui.toast", () => ({ value: undefined }));
-  on("process.run", () => ({ deny: "python is missing" }));
+  on("model.complete", () => ({
+    value: {
+      isAnswered: false,
+      reason: "api-error",
+      status: 529,
+      error: "overloaded",
+      usage: USAGE,
+    },
+  }));
   on("prompt.submit", (_, e) => ({ text: e.text }));
 
   const entered = await $.prompt.submit({ ...TYPED, text: "~opt fix it" });
 
-  expect(entered.text).toBe("~opt fix it");
+  expect(entered.text).toBe("fix it");
+});
+
+test("/prompt-optimizer:opt gets the optimized prompt as its arguments", async ($, on) => {
+  fakeModel(on);
+  const seen: string[] = [];
+  on("command.run", (_, e) => {
+    seen.push(`${e.command}|${e.args}`);
+
+    return { text: "" };
+  });
+
+  await $.command.run({ command: "prompt-optimizer:opt", args: "add a logout button" });
+  await $.command.run({ command: "help", args: "" });
+
+  expect(seen).toEqual([
+    "prompt-optimizer:opt|<!-- optimized -->\noptimized: add a logout button",
+    "help|",
+  ]);
 });
 
 test("the Optimize button replaces the draft with the optimized prompt", async ($, on) => {
-  on("ui.status", () => ({ value: undefined }));
-  on("ui.toast", () => ({ value: undefined }));
+  fakeModel(on);
   const fills: string[] = [];
   on("prompt.read", () => ({ value: { text: "fix login", cursor: 9 } }));
-  on("process.run", (_, e) => ({
-    value: {
-      exitCode: 0,
-      stdout: `optimized: ${e.init?.stdin}\n`,
-      stderr: "",
-      isStdoutTruncated: false,
-      isStderrTruncated: false,
-    },
-  }));
   on("prompt.fill", (_, e) => {
     fills.push(`${e.mode ?? "replace"}:${e.text}`);
 

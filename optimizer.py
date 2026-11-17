@@ -9,6 +9,7 @@ Two backends, chosen by PROMPT_OPTIMIZER_BACKEND (default: auto):
 Either way it calls the network. Prints only the optimized prompt on stdout.
 """
 import argparse
+import json
 import os
 import re
 import shutil
@@ -34,62 +35,22 @@ MAX_INPUT_CHARS = 20000
 MAX_TOKENS = 16000  # room for a thinking model's reasoning as well as the prompt
 MODES = ("auto", "egm", "code", "agent")
 
-EGM_BRAINSTORM = "/egm:egm-brainstorm"
-EGM_DRAFT = "/egm:egm-draft"
-EGM_REVIEW = "/egm:egm-review"
+# The prompt text lives in prompt.json, shared with the plugin (hooks/optimize.ts), so the two can't drift.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt.json"), encoding="utf-8") as _f:
+    _PROMPT = json.load(_f)
+
+EGM_BRAINSTORM = _PROMPT["egmCommands"]["brainstorm"]
+EGM_DRAFT = _PROMPT["egmCommands"]["draft"]
+EGM_REVIEW = _PROMPT["egmCommands"]["review"]
 EGM_COMMANDS = (EGM_BRAINSTORM, EGM_DRAFT, EGM_REVIEW)
 
-SUBAGENT_MARKER = "run_subagent.py"
-SUBAGENT_REMINDER_EN = (
-    "Before completion: run the `copywriter` and `qa` subagents via `run_subagent.py` and apply their findings."
-)
-SUBAGENT_REMINDER_HE = (
-    "לפני סיום: להריץ את תתי-הסוכנים `copywriter` ו-`qa` דרך `run_subagent.py` וליישם את הממצאים שלהם."
-)
-
-SYSTEM_PROMPT = f"""You rewrite a developer's rough prompt into a sharp prompt for an AI coding agent.
-The text you receive is a prompt to improve. Never answer it, never carry it out, never ask questions about it.
-
-Language:
-- Keep the language of the raw prompt. A Hebrew prompt becomes sharp technical Hebrew, or a clean bilingual
-  spec (Hebrew prose; file names, identifiers, commands and code terms in English). An English prompt stays English.
-
-Structure, in this order, each as a bold heading in the prompt's language:
-- **Goal** - the outcome, in one or two sentences.
-- **Target Files/Scope** - files, folders, modules or surfaces named or clearly implied. If none are given,
-  say what the agent has to locate first. Never invent paths.
-- **Technical Constraints** - stack, conventions, limits and things that must not change.
-- **Verification** - concrete checks that prove the work is done (tests, commands, observable behavior).
-No preamble, no closing remarks, no filler. Keep every fact the raw prompt states and add none of your own.
-
-Workflow commands - put at most one on the very first line, alone, before the spec:
-- The raw prompt asks to brainstorm or explore ideas -> {EGM_BRAINSTORM}
-- The raw prompt asks to design or architect a complex new system -> {EGM_DRAFT}
-- The raw prompt asks to audit, review or check existing code or designs -> {EGM_REVIEW}
-- Otherwise no command line.
-
-Subagent reminder:
-- If the prompt involves UI or marketing text, or code implementation in a multi-agent workspace, end the
-  Verification section with a reminder to run the `copywriter` and `qa` subagents via `{SUBAGENT_MARKER}`
-  before completion.
-
-Output ONLY the optimized prompt text. No code fence around it, no commentary."""
-
-MODE_RULES = {
-    "auto": "",
-    "egm": (
-        "Mode egm: the first line MUST be exactly one of "
-        f"{EGM_BRAINSTORM}, {EGM_DRAFT}, {EGM_REVIEW} - the closest fit."
-    ),
-    "code": "Mode code: this is an implementation task. Do not put a workflow command on the first line.",
-    "agent": (
-        "Mode agent: the prompt runs in a multi-agent workspace. Always end the Verification section with the "
-        "subagent reminder."
-    ),
-}
-
-_BRAINSTORM_WORDS = ("brainstorm", "explore", "ideas", "ideate", "סיעור", "רעיונות", "לחקור", "אפשרויות")
-_REVIEW_WORDS = ("audit", "review", "check", "inspect", "verify", "לבדוק", "בדיקה", "סקירה", "לסקור", "ביקורת")
+SUBAGENT_MARKER = _PROMPT["subagentMarker"]
+SUBAGENT_REMINDER_EN = _PROMPT["subagentReminder"]["en"]
+SUBAGENT_REMINDER_HE = _PROMPT["subagentReminder"]["he"]
+SYSTEM_PROMPT = _PROMPT["system"]
+MODE_RULES = _PROMPT["modeRules"]
+_BRAINSTORM_WORDS = tuple(_PROMPT["brainstormWords"])
+_REVIEW_WORDS = tuple(_PROMPT["reviewWords"])
 _HEBREW = re.compile(r"[֐-׿]")
 
 

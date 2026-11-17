@@ -5,6 +5,8 @@ argument-hint: <raw prompt>
 
 The user wants the rough prompt below optimized, then carried out.
 
+If the raw prompt below starts with the line `<!-- optimized -->`, the plugin has already optimized it: skip step 1, and use everything after that line as the optimized prompt.
+
 1. Run this one Bash command. Replace the line `RAW_PROMPT_GOES_HERE` with the raw prompt, copied character for character (keep its language, quotes and line breaks). The quoted heredoc passes it on standard input, so nothing in it is read by the shell:
 
 ```bash

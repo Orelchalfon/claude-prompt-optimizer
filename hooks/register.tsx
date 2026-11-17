@@ -1,56 +1,19 @@
 import type { EngineInterface, Register } from "claude-code";
+import { optimize, parseTrigger } from "./optimize";
 
-// Same triggers as hooks/hook_runner.py, which stays the one that decides.
-// Never `!`: Claude Code reads a leading `!` as Bash mode.
+// Same triggers as hooks/hook_runner.py. Never `!`: Claude Code reads a
+// leading `!` as Bash mode.
 const TRIGGER = /^\s*~opt(\s|$)|(^|\s)--opt(=(auto|egm|code|agent))?\s*$/;
-const TIMEOUT_MS = 90_000;
 const USER_ORIGINS = new Set<string>(["composer", "sdk", "bridge"]);
+// commands/opt.md skips its Python step when the arguments open with this.
+const OPTIMIZED_MARK = "<!-- optimized -->";
+// The plugin's `/prompt-optimizer:opt`, and `/opt` that setup.sh installs from the same file.
+const OPT_COMMANDS = new Set<string>(["prompt-optimizer:opt", "opt"]);
 
-type Rewrite = {
-  triggered: boolean;
-  optimized: boolean;
-  text: string;
-  error: string | null;
-};
-
-let python: string | undefined;
 let isBusy = false;
 
-// The mod's own venv first (Windows, then Unix), then the system Python: a
-// marketplace install has no venv, and macOS/Linux often have only `python3`.
-async function runPython(
-  $: EngineInterface,
-  args: readonly string[],
-  stdin: string,
-) {
-  const root = $.plugin.root;
-  const candidates = python
-    ? [python]
-    : [
-        `${root}/.venv/Scripts/python.exe`,
-        `${root}/.venv/bin/python`,
-        "python",
-        "python3",
-      ];
-  let failure: unknown;
-
-  for (const candidate of candidates) {
-    try {
-      const result = await $.process.run([candidate, ...args], {
-        cwd: root,
-        stdin,
-        timeoutMs: TIMEOUT_MS,
-        env: { PYTHONIOENCODING: "utf-8" },
-      });
-      python = candidate;
-
-      return result;
-    } catch (error) {
-      failure = error;
-    }
-  }
-
-  throw failure;
+function reason(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 120);
 }
 
 async function optimizeDraft($: EngineInterface) {
@@ -73,30 +36,16 @@ async function optimizeDraft($: EngineInterface) {
   $.ui.status("✨ Optimizing prompt…");
 
   try {
-    const { exitCode, stdout, stderr } = await runPython(
-      $,
-      ["optimizer.py"],
-      text,
-    );
-
-    if (exitCode !== 0 || !stdout.trim()) {
-      $.ui.toast(`Prompt not optimized: ${lastLine(stderr) || "no output"}`);
-
-      return;
-    }
-
-    const filled = await $.prompt.fill({
-      text: stdout.trim(),
-      mode: "replace",
-    });
+    const optimized = await optimize($, text);
+    const filled = await $.prompt.fill({ text: optimized, mode: "replace" });
 
     $.ui.toast(
       filled.isFilled
         ? "✨ Prompt optimized: review it, then send"
         : `Could not replace the draft (${filled.refusal ?? "refused"})`,
     );
-  } catch {
-    $.ui.toast("Prompt optimizer could not run Python; see the mod README");
+  } catch (error) {
+    $.ui.toast(`Prompt not optimized: ${reason(error)}`);
   } finally {
     isBusy = false;
     $.ui.status(undefined);
@@ -114,36 +63,52 @@ export const register: Register = (on) => {
       return next(e);
     }
 
-    $.ui.status("✨ Optimizing prompt…");
-    let rewrite: Rewrite;
+    const trigger = parseTrigger(e.text);
 
-    try {
-      const { stdout } = await runPython(
-        $,
-        ["hooks/hook_runner.py", "--json"],
-        e.text,
-      );
-      rewrite = JSON.parse(stdout) as Rewrite;
-    } finally {
-      $.ui.status(undefined);
-    }
-
-    if (!rewrite.triggered) {
+    if (!trigger.triggered) {
       return next(e);
     }
 
-    $.ui.toast(
-      rewrite.optimized
-        ? "✨ Prompt optimized"
-        : `Prompt not optimized (${rewrite.error ?? "unknown error"}); sent as typed`,
-    );
+    $.ui.status("✨ Optimizing prompt…");
 
-    return next({ ...e, text: rewrite.text });
+    try {
+      const optimized = await optimize($, trigger.text, trigger.mode);
+      $.ui.toast("✨ Prompt optimized");
+
+      return next({ ...e, text: optimized });
+    } catch (error) {
+      // Not optimized: the prompt goes on without the trigger, as before.
+      $.ui.toast(`Prompt not optimized (${reason(error)}); sent as typed`);
+
+      return next({ ...e, text: trigger.text });
+    } finally {
+      $.ui.status(undefined);
+    }
   }).catch(($, e, next) => {
     // A broken optimizer never blocks a prompt: it goes on as typed.
     $.ui.toast("Prompt optimizer could not run; sent exactly as typed");
 
     return next(e);
+  });
+
+  // `/prompt-optimizer:opt <prompt>`: optimize here, so commands/opt.md needs no Python.
+  // On any failure the arguments pass on unchanged and opt.md runs optimize.sh.
+  on("command.run", async ($, e, next) => {
+    if (!OPT_COMMANDS.has(e.command) || !e.args.trim()) {
+      return next(e);
+    }
+
+    $.ui.status("✨ Optimizing prompt…");
+
+    try {
+      const optimized = await optimize($, e.args);
+
+      return next({ ...e, args: `${OPTIMIZED_MARK}\n${optimized}` });
+    } catch {
+      return next(e);
+    } finally {
+      $.ui.status(undefined);
+    }
   });
 
   // The API has no slot inside the composer's action bar (next to `+`), so the
@@ -166,11 +131,3 @@ export const register: Register = (on) => {
     );
   });
 };
-
-function lastLine(text: string): string {
-  const lines = text.trim().split("\n");
-
-  return (lines[lines.length - 1] ?? "")
-    .replace(/^error:\s*/, "")
-    .slice(0, 120);
-}
