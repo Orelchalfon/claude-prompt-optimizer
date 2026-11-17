@@ -1,0 +1,5 @@
+# Keep lint results the same on every machine (a user-level ruff config would otherwise apply).
+line-length = 120
+
+[lint]
+select = ["E", "F", "B"]

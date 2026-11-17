@@ -1,0 +1,9 @@
+{
+  "name": "prompt-optimizer",
+  "version": "0.1.0",
+  "description": "Rewrites a rough prompt into a sharp spec: /opt, an Optimize button above the prompt, and the --opt / ~opt triggers.",
+  "author": { "name": "Orel Chalfon" },
+  "homepage": "https://github.com/Orelchalfon/claude-prompt-optimizer",
+  "repository": "https://github.com/Orelchalfon/claude-prompt-optimizer",
+  "license": "MIT"
+}

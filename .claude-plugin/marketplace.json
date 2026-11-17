@@ -1,0 +1,12 @@
+{
+  "name": "orelchalfon",
+  "owner": { "name": "Orel Chalfon" },
+  "description": "Claude Code plugins by Orel Chalfon.",
+  "plugins": [
+    {
+      "name": "prompt-optimizer",
+      "source": "./",
+      "description": "Rewrites a rough prompt into a sharp spec: an Optimize button above the prompt, the --opt / ~opt triggers and /opt."
+    }
+  ]
+}
