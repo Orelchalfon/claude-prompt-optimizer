@@ -86,6 +86,7 @@ def test_system_prompt_states_the_language_structure_and_output_rules():
     ):
         assert heading in system
     assert "Output ONLY the optimized prompt text" in system
+    assert "Illustrative example (not from the user):" in system
 
 
 def test_positional_prompt_works_like_the_flag(capsys):
