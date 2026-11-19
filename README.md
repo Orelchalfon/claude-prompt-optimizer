@@ -1,8 +1,11 @@
 # prompt-optimizer
 
 Turns a rough prompt into a sharp one before Claude acts on it. A small, fast Claude model (Haiku)
-rewrites your prompt into four parts: **Goal**, **Target Files/Scope**, **Technical Constraints** and
-**Verification**. It keeps your language (Hebrew stays Hebrew, English stays English).
+rewrites your prompt into a structured spec: **Title**, **Role & stance**, **Task**, **Context**,
+**Inputs available**, **Output requirements**, **Constraints / Do-nots**, **Examples / References**,
+**Execution checklist** and, when needed, **Conflict resolution**. It keeps your language (Hebrew stays
+Hebrew, English stays English). If your prompt is too vague, it first asks a few checkbox questions and
+uses your answers.
 
 **Do I need Python? No.** The plugin asks Claude Code itself to do the rewrite, using the account you are
 already signed in with. You don't need to install Python, edit PATH, or have an API key. You only need Claude Code.
@@ -26,6 +29,10 @@ are not terminal commands.
    This installs the plugin.
 5. Close Claude Code completely and open it again.
 6. Check that a **✨Prompt Optimize** button appears just above the message box. If it's there, you're done.
+
+![The ✨ Prompt Optimize button above the message box](docs/prompt-optimize-button.png)
+
+[Watch a short demo](docs/demo.mp4)
 
 If step 3 or 4 says the `/plugin` command is unknown, your app doesn't offer it. Open Claude Code in a
 terminal once and run the same two commands without the leading slash:

@@ -14,6 +14,7 @@ const TIMEOUT_MS = 80_000;
 
 type PromptFile = {
   system: string;
+  clarify: string;
   modeRules: Record<Mode, string>;
   egmCommands: { brainstorm: string; draft: string; review: string };
   subagentMarker: string;
@@ -138,7 +139,105 @@ export function finalize(
   return command ? `${command}\n\n${body}` : body;
 }
 
-/** Returns the optimized prompt. Throws an Error whose message is fit to show. */
+/** The person dismissed the clarifying questions: optimize nothing. */
+export class Cancelled extends Error {}
+
+type Question = { question: string; header: string; options: string[] };
+
+/** Reads the clarify call's JSON; anything malformed counts as "no questions". */
+export function parseQuestions(reply: string): Question[] {
+  const json = /\{[\s\S]*\}/.exec(reply);
+
+  if (!json) {
+    return [];
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(json[0]);
+  } catch {
+    return [];
+  }
+
+  const list = (parsed as { questions?: unknown }).questions;
+
+  if (!Array.isArray(list)) {
+    return [];
+  }
+
+  // The dialog takes 2-4 options and a 12-character header per question.
+  return list
+    .filter(
+      (q): q is { question: string; header?: unknown; options: unknown[] } =>
+        typeof q?.question === "string" &&
+        q.question.trim() !== "" &&
+        Array.isArray(q.options),
+    )
+    .map((q) => ({
+      question: q.question.trim(),
+      header: (typeof q.header === "string" ? q.header : "Clarify").slice(0, 12),
+      options: q.options
+        .filter((o): o is string => typeof o === "string" && o.trim() !== "")
+        .slice(0, 4),
+    }))
+    .filter((q) => q.options.length >= 2)
+    .slice(0, 3);
+}
+
+/**
+ * Asks the person checkbox questions when the prompt is too vague to optimize
+ * well, and returns their answers as a block for the optimizer ("" when the
+ * prompt is clear, the check fails, or no one is there to ask).
+ * Throws Cancelled when the person dismisses a question.
+ */
+export async function askClarifications(
+  $: EngineInterface,
+  raw: string,
+): Promise<string> {
+  // A plain -p run draws nowhere and has no one to answer: optimize as before.
+  if ((await $.session.surfaces()).length === 0) {
+    return "";
+  }
+
+  const p = await loadPrompt($);
+  const reply = await $.model.complete({
+    model: MODEL,
+    system: p.clarify,
+    prompt: raw,
+    maxTokens: MAX_TOKENS,
+    timeoutMs: TIMEOUT_MS,
+    effort: "low",
+  });
+  const questions = reply.isAnswered ? parseQuestions(reply.text) : [];
+  const answers: string[] = [];
+
+  for (const q of questions) {
+    let answer: string;
+
+    try {
+      answer = await $.ui.ask(q.question, {
+        options: q.options,
+        header: q.header,
+        multiSelect: true,
+      });
+    } catch {
+      throw new Cancelled("the questions were dismissed");
+    }
+
+    answers.push(`- ${q.question} ${answer}`);
+  }
+
+  return answers.length > 0
+    ? `Clarifications from the user:\n${answers.join("\n")}`
+    : "";
+}
+
+/**
+ * Returns the optimized prompt, after asking clarifying questions when the
+ * prompt is vague. Throws Cancelled when they are dismissed, else an Error
+ * whose message is fit to show.
+ */
 export async function optimize(
   $: EngineInterface,
   raw: string,
@@ -153,11 +252,12 @@ export async function optimize(
   }
 
   const p = await loadPrompt($);
+  const clarifications = await askClarifications($, raw);
   const rule = p.modeRules[mode];
   const reply = await $.model.complete({
     model: MODEL,
     system: rule ? `${p.system}\n\n${rule}` : p.system,
-    prompt: raw,
+    prompt: clarifications ? `${raw}\n\n${clarifications}` : raw,
     maxTokens: MAX_TOKENS,
     timeoutMs: TIMEOUT_MS,
   });

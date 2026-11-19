@@ -1,5 +1,5 @@
 import type { EngineInterface, Register } from "claude-code";
-import { optimize, parseTrigger } from "./optimize";
+import { Cancelled, optimize, parseTrigger } from "./optimize";
 
 // Same triggers as hooks/hook_runner.py. Never `!`: Claude Code reads a
 // leading `!` as Bash mode.
@@ -104,8 +104,13 @@ export const register: Register = (on) => {
       const optimized = await optimize($, e.args);
 
       return next({ ...e, args: `${OPTIMIZED_MARK}\n${optimized}` });
-    } catch {
-      return next(e);
+    } catch (error) {
+      // Dismissed questions: carry out the prompt as typed, never via optimize.sh, which can't ask.
+      return next(
+        error instanceof Cancelled
+          ? { ...e, args: `${OPTIMIZED_MARK}\n${e.args}` }
+          : e,
+      );
     } finally {
       $.ui.status(undefined);
     }

@@ -72,7 +72,18 @@ def test_system_prompt_states_the_language_structure_and_output_rules():
     system = optimizer.build_system("auto")
     assert "Hebrew prompt becomes sharp technical Hebrew" in system
     assert "English prompt stays English" in system
-    for heading in ("**Goal**", "**Target Files/Scope**", "**Technical Constraints**", "**Verification**"):
+    for heading in (
+        "**Title**",
+        "**Role & stance**",
+        "**Task**",
+        "**Context**",
+        "**Inputs available**",
+        "**Output requirements**",
+        "**Constraints / Do-nots**",
+        "**Examples / References**",
+        "**Execution checklist**",
+        "**Conflict resolution**",
+    ):
         assert heading in system
     assert "Output ONLY the optimized prompt text" in system
 
