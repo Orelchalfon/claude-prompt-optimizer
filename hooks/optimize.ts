@@ -166,7 +166,7 @@ export function parseQuestions(reply: string): Question[] {
     return [];
   }
 
-  // The dialog takes 2-4 options and a 12-character header per question.
+  // The dialog takes up to 4 questions, each with 2-4 options and a 12-character header.
   return list
     .filter(
       (q): q is { question: string; header?: unknown; options: unknown[] } =>
@@ -182,7 +182,7 @@ export function parseQuestions(reply: string): Question[] {
         .slice(0, 4),
     }))
     .filter((q) => q.options.length >= 2)
-    .slice(0, 3);
+    .slice(0, 4);
 }
 
 /**
